@@ -1,7 +1,5 @@
 # Docker Machine
 
-## Testing, testing, 1, 2, 3
-
 ![](https://docs.docker.com/machine/img/logo.png)
 
 Machine lets you create Docker hosts on your computer, on cloud providers, and
