@@ -78,6 +78,11 @@ func (d *BaseDriver) ResolveStorePath(file string) string {
 	return filepath.Join(d.StorePath, "machines", d.MachineName, file)
 }
 
+// ResolvePermanentStorePath returns the store path for permanent disks
+func (d *BaseDriver) ResolvePermanentStorePath(file string) string {
+	return filepath.Join(d.StorePath, file)
+}
+
 // SetSwarmConfigFromFlags configures the driver for swarm
 func (d *BaseDriver) SetSwarmConfigFromFlags(flags DriverOptions) {
 	d.SwarmMaster = flags.Bool("swarm-master")

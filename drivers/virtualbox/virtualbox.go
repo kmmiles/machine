@@ -31,6 +31,7 @@ const (
 	defaultUIType              = "headless"
 	defaultHostOnlyNoDHCP      = false
 	defaultDiskSize            = 20000
+	defaultPermanentDiskSize   = 20000
 	defaultDNSProxy            = true
 	defaultDNSResolver         = false
 )
@@ -57,6 +58,7 @@ type Driver struct {
 	CPU                 int
 	Memory              int
 	DiskSize            int
+	PermanentDiskSize   int
 	NatNicType          string
 	Boot2DockerURL      string
 	Boot2DockerImportVM string
@@ -70,6 +72,7 @@ type Driver struct {
 	DNSProxy            bool
 	NoVTXCheck          bool
 	ShareFolder         string
+	ShareDrives         string
 }
 
 // NewDriver creates a new VirtualBox driver with default settings.
@@ -87,6 +90,7 @@ func NewDriver(hostName, storePath string) *Driver {
 		Memory:              defaultMemory,
 		CPU:                 defaultCPU,
 		DiskSize:            defaultDiskSize,
+		PermanentDiskSize:   defaultPermanentDiskSize,
 		NatNicType:          defaultHostOnlyNictype,
 		HostOnlyCIDR:        defaultHostOnlyCIDR,
 		HostOnlyNicType:     defaultHostOnlyNictype,
@@ -123,6 +127,12 @@ func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 			Usage:  "Size of disk for host in MB",
 			Value:  defaultDiskSize,
 			EnvVar: "VIRTUALBOX_DISK_SIZE",
+		},
+		mcnflag.IntFlag{
+			Name:   "virtualbox-permanent-disk-size",
+			Usage:  "Size of permanent disk for host in MB",
+			Value:  defaultPermanentDiskSize,
+			EnvVar: "VIRTUALBOX_PERMANENT_DISK_SIZE",
 		},
 		mcnflag.StringFlag{
 			Name:   "virtualbox-boot2docker-url",
@@ -196,6 +206,11 @@ func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 			Name:   "virtualbox-share-folder",
 			Usage:  "Mount the specified directory instead of the default home location. Format: dir:name",
 		},
+		mcnflag.StringFlag{
+			EnvVar: "VIRTUALBOX_SHARE_DRIVES",
+			Name:   "virtualbox-share-drives",
+			Usage:  "Share specified host drives with guest, seperated by commas e.g. c,d",
+		},
 	}
 }
 
@@ -230,6 +245,7 @@ func (d *Driver) GetURL() (string, error) {
 func (d *Driver) SetConfigFromFlags(flags drivers.DriverOptions) error {
 	d.CPU = flags.Int("virtualbox-cpu-count")
 	d.Memory = flags.Int("virtualbox-memory")
+	d.PermanentDiskSize = flags.Int("virtualbox-permanent-disk-size")
 	d.DiskSize = flags.Int("virtualbox-disk-size")
 	d.Boot2DockerURL = flags.String("virtualbox-boot2docker-url")
 	d.SetSwarmConfigFromFlags(flags)
@@ -246,6 +262,7 @@ func (d *Driver) SetConfigFromFlags(flags drivers.DriverOptions) error {
 	d.DNSProxy = !flags.Bool("virtualbox-no-dns-proxy")
 	d.NoVTXCheck = flags.Bool("virtualbox-no-vtx-check")
 	d.ShareFolder = flags.String("virtualbox-share-folder")
+	d.ShareDrives = flags.String("virtualbox-share-drives")
 
 	return nil
 }
@@ -347,6 +364,13 @@ func (d *Driver) CreateVM() error {
 		if err := d.diskCreator.Create(d.DiskSize, d.publicSSHKeyPath(), d.diskPath()); err != nil {
 			return err
 		}
+
+		if _, err := os.Stat(d.permanentDiskPath()); os.IsNotExist(err) {
+			log.Debugf("Creating permanent disk image...")
+			if err := d.diskCreator.Create(d.PermanentDiskSize, d.publicSSHKeyPath(), d.permanentDiskPath()); err != nil {
+				return err
+			}
+		}
 	}
 
 	if err := d.vbm("createvm",
@@ -442,6 +466,15 @@ func (d *Driver) CreateVM() error {
 		return err
 	}
 
+	if err := d.vbm("storageattach", d.MachineName,
+		"--storagectl", "SATA",
+		"--port", "2",
+		"--device", "0",
+		"--type", "hdd",
+		"--medium", d.permanentDiskPath()); err != nil {
+		return err
+	}
+
 	// let VBoxService do nice magic automounting (when it's used)
 	if err := d.vbm("guestproperty", "set", d.MachineName, "/VirtualBox/GuestAdd/SharedFolders/MountPrefix", "/"); err != nil {
 		return err
@@ -450,6 +483,28 @@ func (d *Driver) CreateVM() error {
 		return err
 	}
 
+	// mount share drives
+	log.Debugf("setting up share drives: %s", d.ShareDrives)
+	for _, shareDrive := range strings.Split(d.ShareDrives, ",") {
+		shareDir, shareName := getShareDirAndName(shareDrive)
+		log.Debugf("setting up shareDrive '%s' -> '%s'", shareDir, shareName)
+		if _, err := os.Stat(shareDir); err != nil && !os.IsNotExist(err) {
+			return err
+		} else if !os.IsNotExist(err) {
+			// woo, shareDir exists!  let's carry on!
+			if err := d.vbm("sharedfolder", "add", d.MachineName, "--name", shareName, "--hostpath", shareDir, "--automount"); err != nil {
+				return err
+			}
+
+			// enable symlinks
+			if err := d.vbm("setextradata", d.MachineName, "VBoxInternal2/SharedFoldersEnableSymlinksCreate/"+shareName, "1"); err != nil {
+				return err
+			}
+		}
+	}
+
+	// mount share folder
+	// TODO: exorcise all the share folder stuff. disk sharing replaces it.
 	shareName, shareDir := getShareDriveAndName()
 
 	if d.ShareFolder != "" {
@@ -678,7 +733,8 @@ func (d *Driver) Remove() error {
 		}
 	}
 
-	return d.vbm("unregistervm", "--delete", d.MachineName)
+	//return d.vbm("unregistervm", "--delete", d.MachineName)
+	return d.vbm("unregistervm", d.MachineName)
 }
 
 func (d *Driver) GetState() (state.State, error) {
@@ -807,6 +863,10 @@ func (d *Driver) publicSSHKeyPath() string {
 
 func (d *Driver) diskPath() string {
 	return d.ResolveStorePath("disk.vmdk")
+}
+
+func (d *Driver) permanentDiskPath() string {
+	return d.ResolvePermanentStorePath("permanent_disk.vmdk")
 }
 
 func (d *Driver) setupHostOnlyNetwork(machineName string) (*hostOnlyNetwork, error) {

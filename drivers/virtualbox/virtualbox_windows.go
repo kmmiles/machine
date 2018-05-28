@@ -94,6 +94,12 @@ func getShareDriveAndName() (string, string) {
 	return "c/Users", "\\\\?\\c:\\Users"
 }
 
+func getShareDirAndName(driveLetter string) (string, string) {
+	shareName := strings.ToLower(driveLetter)
+	shareDir := fmt.Sprintf("\\\\?\\%s:\\", shareName)
+	return shareDir, shareName
+}
+
 func isHyperVInstalled() bool {
 	// check if hyper-v is installed
 	_, err := exec.LookPath("vmms.exe")
