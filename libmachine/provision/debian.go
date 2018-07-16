@@ -92,7 +92,9 @@ func (provisioner *DebianProvisioner) Provision(swarmOptions swarm.Options, auth
 	}
 	provisioner.EngineOptions.StorageDriver = storageDriver
 
-	// HACK: since debian does not come with sudo by default we install
+
+/*      XXX: These are baked into the beachbum iso
+
 	log.Debug("installing sudo")
 	if _, err := provisioner.SSHCommand("if ! type sudo; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y sudo; fi"); err != nil {
 		return err
@@ -114,6 +116,7 @@ func (provisioner *DebianProvisioner) Provision(swarmOptions swarm.Options, auth
 	if err := installDockerGeneric(provisioner, engineOptions.InstallURL); err != nil {
 		return err
 	}
+*/
 
 	log.Debug("waiting for docker daemon")
 	if err := mcnutils.WaitFor(provisioner.dockerDaemonResponding); err != nil {
